@@ -38,6 +38,14 @@ cleanup() {
   [ -n "${WEB_PID:-}" ] && kill "$WEB_PID" 2>/dev/null || true
   [ -n "${SD_PID:-}" ] && kill "$SD_PID" 2>/dev/null || true
   [ -n "${GW_PID:-}" ] && kill "$GW_PID" 2>/dev/null || true
+  if [ "$FAIL" -gt 0 ]; then
+    printf '\n\033[1m---- diagnostics ----\033[0m\n'
+    for f in "$DATA_DIR"/logs/*.log; do
+      [ -f "$f" ] || continue
+      printf '\n### %s (last 25 lines)\n' "$f"
+      tail -25 "$f"
+    done
+  fi
 }
 trap cleanup EXIT
 
