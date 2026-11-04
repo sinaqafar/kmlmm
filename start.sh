@@ -22,6 +22,13 @@ PORT="${PORT:-8080}"
 PI_WEB_PORT="${PI_WEB_PORT:-8504}"
 HEAP_PERCENT="${HEAP_PERCENT:-95}"
 SETUP_MODE="${SETUP_MODE:-auth}"
+# First-boot workspace. Created once, never touched again: an existing project
+# is left exactly as it is, and no model is ever pinned for you.
+PROJECT_PATH="${PROJECT_PATH:-$STATE_ROOT/project}"
+PROJECT_NAME="${PROJECT_NAME:-}"
+PROJECT_GIT_URL="${PROJECT_GIT_URL:-}"
+BOOTSTRAP_SESSION="${BOOTSTRAP_SESSION:-1}"
+export PROJECT_PATH PROJECT_NAME PROJECT_GIT_URL BOOTSTRAP_SESSION
 
 export PI_CODING_AGENT_DIR="$AGENT_DIR"
 export PI_WEB_DATA_DIR="$DATA_DIR"
@@ -37,6 +44,10 @@ export PI_WEB_DEFAULTS_CONFIG="${PI_WEB_DEFAULTS_CONFIG:-/app/defaults.json}"
 [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] || die "PORT=$PORT is out of range."
 [ "$PI_WEB_PORT" -ge 1 ] && [ "$PI_WEB_PORT" -le 65535 ] || die "PI_WEB_PORT=$PI_WEB_PORT is out of range."
 [ "$PORT" != "$PI_WEB_PORT" ] || die "PORT and PI_WEB_PORT are both $PORT. The gateway proxies to Pi-Web on PI_WEB_PORT, so they must differ (leave PI_WEB_PORT at 8504)."
+BOOTSTRAP_PROJECT="${BOOTSTRAP_PROJECT:-1}"
+case "$BOOTSTRAP_PROJECT" in 0|1) ;; *) die "BOOTSTRAP_PROJECT='$BOOTSTRAP_PROJECT' must be 0 or 1." ;; esac
+case "$BOOTSTRAP_SESSION" in 0|1) ;; *) die "BOOTSTRAP_SESSION='$BOOTSTRAP_SESSION' must be 0 or 1." ;; esac
+export BOOTSTRAP_PROJECT
 [[ "$HEAP_PERCENT" =~ ^[0-9]+$ ]] && [ "$HEAP_PERCENT" -ge 20 ] && [ "$HEAP_PERCENT" -le 100 ] \
   || die "HEAP_PERCENT='$HEAP_PERCENT' must be a whole number between 20 and 100."
 case "$SETUP_MODE" in auth|direct) ;; *) die "SETUP_MODE='$SETUP_MODE' must be 'auth' or 'direct'."; esac
@@ -191,6 +202,15 @@ done
 curl -fsS "http://127.0.0.1:${PI_WEB_PORT}/api/pi-web/health" >/dev/null \
   || die "web server never became healthy"
 log "web server healthy"
+
+# ── 5b. first-boot project + session ─────────────────────────────────────────
+# Runs while Pi-Web is reachable only on loopback, so the UI never shows an
+# empty state. Best effort: a failure is logged and the stack still comes up.
+LOG_DIR="$DATA_DIR/logs"
+if [ "$BOOTSTRAP_PROJECT" = "1" ]; then
+  bash /app/scripts/bootstrap-project.sh \
+    || warn "project bootstrap failed (non-fatal) — see $LOG_DIR/project.log"
+fi
 
 # ── 6. public surface ────────────────────────────────────────────────────────
 if [ "$SETUP_MODE" = "direct" ]; then

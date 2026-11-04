@@ -135,6 +135,30 @@ curl -fsS "http://127.0.0.1:8504/api/pi-web/health" >/dev/null \
 curl -fsS http://127.0.0.1:8504/api/config | jq -e '.effectiveConfig.pathAccess.allowedPaths | index("/data")' >/dev/null \
   && ok "read-only defaults applied (pathAccess includes /data)" || bad "defaults.json not applied"
 
+step "project bootstrap (what start.sh runs)"
+BOOT_PROJECT="$DATA_DIR/project"
+PROJECT_PATH="$BOOT_PROJECT" PROJECT_NAME="Smoke Project" /app/scripts/bootstrap-project.sh \
+  >>"$DATA_DIR/logs/bootstrap.log" 2>&1 \
+  && ok "bootstrap-project.sh exits 0" || { bad "bootstrap-project.sh failed"; tail -5 "$DATA_DIR/logs/bootstrap.log"; }
+curl -fsS http://127.0.0.1:8504/api/projects | jq -e --arg p "$BOOT_PROJECT" 'any(.path == $p)' >/dev/null \
+  && ok "project registered through the real API" || bad "project not registered"
+curl -fsS "http://127.0.0.1:8504/api/sessions?cwd=$BOOT_PROJECT" | jq -e 'length >= 1' >/dev/null \
+  && ok "an empty session was opened in it" || bad "no session created"
+
+before=$(curl -fsS http://127.0.0.1:8504/api/projects | jq 'length')
+PROJECT_PATH="$BOOT_PROJECT" PROJECT_NAME="Smoke Project" /app/scripts/bootstrap-project.sh \
+  >>"$DATA_DIR/logs/bootstrap.log" 2>&1 || true
+after=$(curl -fsS http://127.0.0.1:8504/api/projects | jq 'length')
+[ "$before" = "$after" ] && ok "second run is a no-op (no duplicate project)" \
+  || bad "bootstrap created a duplicate project ($before -> $after)"
+
+# A bad destination must be a warning, not a dead stack: the parent here is a
+# regular file, so the server answers ENOTDIR and the script must swallow it.
+: > "$DATA_DIR/blocker-file"
+PROJECT_PATH="$DATA_DIR/blocker-file/child" BOOTSTRAP_SESSION=0 \
+  /app/scripts/bootstrap-project.sh >>"$DATA_DIR/logs/bootstrap.log" 2>&1 \
+  && ok "a failing path is a warning, not a crash" || bad "bootstrap exited non-zero on failure"
+
 step "boot: auth gateway"
 node /app/gateway/server.js >>"$DATA_DIR/logs/gateway.log" 2>&1 &
 GW_PID=$!

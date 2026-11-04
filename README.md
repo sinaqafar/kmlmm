@@ -156,6 +156,7 @@ Other supported variables:
 | `PI_WEB_PORT` | `8504` | loopback port for Pi-Web; must differ from `PORT` |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / … | – | any other Pi provider |
 | `TZ` | – | e.g. `Asia/Tehran` for log timestamps |
+| `BOOTSTRAP_PROJECT` | `1` | `0` = start with an empty UI (see below) |
 
 Advanced (set by the image; change only if you know why): `PI_CODING_AGENT_DIR`
 (`/data/.pi/agent`), `PI_WEB_DATA_DIR` (`/data/pi-web`),
@@ -175,8 +176,34 @@ returns `ok`.
 
 ## After it's up
 
-1. **Add a project**: `+ Add Project` → path `/data/<your-repo>`, or clone a repo
-   in the terminal tab first.
+**A project and an empty session already exist.** `start.sh` runs
+`scripts/bootstrap-project.sh` once the stack is healthy, so the first thing you
+see is a usable workspace at `/data/project` instead of an empty "Add Project"
+dialog. It is idempotent — redeploys never duplicate anything — and it never
+pins a model: the model is yours to choose.
+
+Change what it creates with variables:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `PROJECT_PATH` | `/data/project` | where the first project lives |
+| `PROJECT_NAME` | basename of the path | label in the UI |
+| `PROJECT_GIT_URL` | – | clone this repo into the path when it is empty |
+| `PROJECT_BRANCH` | repo default | branch for that clone |
+| `BOOTSTRAP_SESSION` | `1` | `0` = create the project but no session |
+| `BOOTSTRAP_PROJECT` | `1` | `0` = create nothing, start with an empty UI |
+
+Example — land straight in a clone of your repo:
+
+```
+PROJECT_PATH=/data/myapp
+PROJECT_GIT_URL=https://github.com/you/myapp.git
+```
+
+Then:
+
+1. **Add more projects**: `+ Add Project` → path `/data/<your-repo>`, or clone a
+   repo in the terminal tab first.
 2. **Pick a model**: inside a session, `/model` → search `nvidia-nim/`.
    Verified IDs from the installed extension include:
    `nvidia-nim/z-ai/glm4.7`, `nvidia-nim/z-ai/glm5`,

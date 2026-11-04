@@ -27,6 +27,7 @@ jobs:
           bash -n start.sh
           bash -n scripts/smoke-test.sh
           bash -n scripts/stop-all.sh
+          bash -n scripts/bootstrap-project.sh
           node --check gateway/server.js
           jq empty defaults.json railway.json
           # Railway rejects Dockerfiles containing VOLUME
