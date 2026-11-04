@@ -85,6 +85,9 @@ jobs:
           docker logs boot > /tmp/boot.log 2>&1 || true
           sed 's/\x1b\[[0-9;]*m//g' /tmp/boot.log | tail -30
 
+          echo "::group::boot log"
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/boot.log | tail -40
+          echo "::endgroup::"
           grep -q "NOT a mounted Railway Volume" /tmp/boot.log
           grep -q "node heap:" /tmp/boot.log
           grep -q "session daemon ready" /tmp/boot.log
@@ -97,8 +100,18 @@ jobs:
           test "$(curl -s -m 5 -o /dev/null -w '%{http_code}' -u ci:wrong http://127.0.0.1:18080/)" = "401"
 
           # Pi packages must resolve from the profile the container actually uses
+          set +e
           docker exec boot env PI_CODING_AGENT_DIR=/data/.pi/agent pi list > /tmp/list.txt 2>&1
+          LIST_RC=$?
+          set -e
+          echo "::group::pi list (rc=$LIST_RC)"
+          head -40 /tmp/list.txt
+          echo "::endgroup::"
+          echo "npm entries: $(grep -c '^  npm:' /tmp/list.txt || true)"
+          echo "agent files: $(docker exec boot sh -c 'ls /data/.pi/agent/agents/*.md | wc -l' || echo ERR)"
+          docker exec boot sh -c 'ls -la /data/.pi/agent | head; jq -c . /data/.pi/agent/settings.json | head -c 500' || true
+          test "$LIST_RC" -eq 0
           test "$(grep -c '^  npm:' /tmp/list.txt)" -ge 16
-          test "$(ls /data/.pi/agent/agents/*.md | wc -l)" -ge 4
+          test "$(docker exec boot sh -c 'ls /data/.pi/agent/agents/*.md | wc -l')" -ge 4
 
           docker rm -f boot
