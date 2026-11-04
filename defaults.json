@@ -1,0 +1,12 @@
+{
+  "host": "127.0.0.1",
+  "pathAccess": {
+    "allowedPaths": ["/data", "/app", "/tmp"]
+  },
+  "spawnSessions": true,
+  "subsessions": true,
+  "sessionMessages": true,
+  "askUser": true,
+  "extensionDialogsTimeoutMs": 600000,
+  "installationName": "Pi-Web Railway"
+}
