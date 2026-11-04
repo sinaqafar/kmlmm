@@ -45,12 +45,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Failures are reported as check-run annotations: that is readable through
-      # the API even when artifact/log endpoints are unreachable.
+      # Failures are surfaced as ::error workflow commands. Those show up as
+      # check-run annotations, which stay readable even when artifact and log
+      # endpoints are unreachable.
       - name: Smoke test inside the image
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set +e
           docker run --rm --name smoke -e SMOKE_TEST=1 \
@@ -59,25 +57,11 @@ jobs:
           sed 's/\x1b\[[0-9;]*m//g' /tmp/smoke.log || true
 
           if [ "$STATUS" -ne 0 ]; then
-            BODY=$(printf '%s\n' \
-              "smoke test failed inside the built image." \
-              "" \
-              "$(grep -E 'FAIL|passed,' /tmp/smoke.log | sed 's/\x1b\[[0-9;]*m//g' | tail -20)" \
-              "" \
-              "full log: $RUN_URL")
-            gh api "repos/${GITHUB_REPOSITORY}/check-runs" \
-              -X POST \
-              -f name="smoke-test-details" \
-              -f head_sha="${GITHUB_SHA}" \
-              -f status=completed \
-              -f conclusion=failure \
-              -f "output[title]=smoke test failed" \
-              -f "output[summary]=$BODY" \
-              -F "output[annotations][0][path]=scripts/smoke-test.sh" \
-              -F "output[annotations][0][start_line]=1" \
-              -F "output[annotations][0][end_line]=1" \
-              -F "output[annotations][0][annotation_level]=failure" \
-              -F "output[annotations][0][message]=$BODY" >/dev/null 2>&1 || true
+            while IFS= read -r line; do
+              printf '::error file=scripts/smoke-test.sh,line=1::%s\n' "$line"
+            done < <(sed 's/\x1b\[[0-9;]*m//g' /tmp/smoke.log \
+                       | grep -E '^  FAIL|smoke test: ' | head -15)
+            printf '::error file=scripts/smoke-test.sh,line=1::smoke test failed (exit %s)\n' "$STATUS"
             exit "$STATUS"
           fi
 
