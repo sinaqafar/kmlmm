@@ -54,7 +54,9 @@ jobs:
           docker run --rm --name smoke -e SMOKE_TEST=1 \
             pi-web-railway:ci /app/scripts/smoke-test.sh > /tmp/smoke.log 2>&1
           STATUS=$?
+          echo "::group::smoke test ($(grep -c 'PASS' /tmp/smoke.log || echo 0) checks passed)"
           sed 's/\x1b\[[0-9;]*m//g' /tmp/smoke.log || true
+          echo "::endgroup::"
 
           if [ "$STATUS" -ne 0 ]; then
             while IFS= read -r line; do

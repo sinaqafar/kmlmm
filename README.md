@@ -67,6 +67,32 @@ UX: `@juicesharp/rpiv-ask-user-question`; provider: `pi-nvidia-nim`.
 
 ---
 
+## What has actually been verified
+
+CI (`.github/workflows/image.yml`) builds this exact Dockerfile and boots the
+resulting container with a published port — the same path Railway takes:
+
+| Check | How |
+| --- | --- |
+| Image builds | `docker/build-push-action` on every push (≈3.5 min) |
+| 16 Pi packages resolve from `/data/.pi/agent` | `pi list` inside the container |
+| `node-pty` native module loads | resolved via pi-web's module root (terminals work) |
+| Council agents parse | 4 files with valid frontmatter, `model:` pinned |
+| Session daemon + web server boot | socket created, `/api/pi-web/health` returns 200 |
+| Public surface | `401` without auth, `200` with, `ok` on `/healthz` |
+| Pi-Web not internet-facing | bound to `127.0.0.1`, not `0.0.0.0` |
+| No volume mounted | loud warning, never a silent data loss |
+| Redeploy keeps state | package top-up, auth and agents survive |
+
+Run it yourself on any machine with Docker:
+
+```bash
+docker build -t pi-web-railway .
+docker run --rm -e SMOKE_TEST=1 pi-web-railway /app/scripts/smoke-test.sh
+```
+
+---
+
 ## Deploy
 
 ### 1. Push this repo to GitHub
