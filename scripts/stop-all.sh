@@ -14,8 +14,19 @@ set -Eeuo pipefail
 MODE="${1:-apply}"
 VOLUME_ROOT="${VOLUME_ROOT:-/data}"
 HOME_DIR="${HOME_DIR:-/root}"
-PI_AGENT="${PI_CODING_AGENT_DIR:-$VOLUME_ROOT/.pi/agent}"
-PI_WEB_DATA="${PI_WEB_DATA_DIR:-$VOLUME_ROOT/pi-web}"
+# Destination must live on the volume. The image exports PI_CODING_AGENT_DIR and
+# PI_WEB_DATA_DIR globally, so only trust them when they already point inside
+# VOLUME_ROOT; otherwise derive from VOLUME_ROOT (and say so).
+pick_dir() { # <env value> <default under volume>
+  local env_val="$1" fallback="$2"
+  if [ -n "$env_val" ] && [ "${env_val#"$VOLUME_ROOT"/}" != "$env_val" ]; then
+    printf '%s' "$env_val"
+  else
+    printf '%s' "$fallback"
+  fi
+}
+PI_AGENT=$(pick_dir "${PI_CODING_AGENT_DIR:-}" "$VOLUME_ROOT/.pi/agent")
+PI_WEB_DATA=$(pick_dir "${PI_WEB_DATA_DIR:-}" "$VOLUME_ROOT/pi-web")
 
 ok()  { printf '  \033[32mok\033[0m   %s\n' "$*"; }
 mv_(){ printf '  \033[36mmove\033[0m %s\n' "$*"; }
