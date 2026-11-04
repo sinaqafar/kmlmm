@@ -62,7 +62,8 @@ COPY defaults.json /app/defaults.json
 COPY start.sh /app/start.sh
 COPY gateway/server.js /app/gateway/server.js
 COPY agents/ /app/agents-seed/
-RUN chmod +x /app/start.sh
+COPY scripts/ /app/scripts/
+RUN chmod +x /app/start.sh /app/scripts/*.sh
 
 WORKDIR /data
 EXPOSE 8080
