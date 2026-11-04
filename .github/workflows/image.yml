@@ -10,6 +10,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+  checks: write
+
 jobs:
   build-and-smoke:
     runs-on: ubuntu-latest
@@ -69,7 +73,11 @@ jobs:
               -f conclusion=failure \
               -f "output[title]=smoke test failed" \
               -f "output[summary]=$BODY" \
-              -F "output[annotations][][path]=scripts/smoke-test.sh" >/dev/null 2>&1 || true
+              -F "output[annotations][0][path]=scripts/smoke-test.sh" \
+              -F "output[annotations][0][start_line]=1" \
+              -F "output[annotations][0][end_line]=1" \
+              -F "output[annotations][0][annotation_level]=failure" \
+              -F "output[annotations][0][message]=$BODY" >/dev/null 2>&1 || true
             exit "$STATUS"
           fi
 

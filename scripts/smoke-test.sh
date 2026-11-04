@@ -57,7 +57,16 @@ command -v rg      >/dev/null && ok "ripgrep present" || bad "ripgrep missing"
 command -v git     >/dev/null && ok "git present" || bad "git missing"
 node -e 'const v=process.versions.node.split(".").map(Number);process.exit(v[0]>22||(v[0]===22&&v[1]>=19)?0:1)' \
   && ok "node $(node -v) satisfies pi-web >=22.19" || bad "node $(node -v) too old"
-node -e 'require("node-pty")' 2>/dev/null \
+# node-pty is not a global module: it lives under pi-web's own node_modules.
+# Resolve it from there, the way pi-web's terminal plugin does.
+PIWEB_ROOT=$(npm root -g)/@jmfederico/pi-web
+node -e "
+  const { createRequire } = require('node:module');
+  const r = createRequire('$PIWEB_ROOT/package.json');
+  const p = r('node-pty');
+  if (!p || typeof p.spawn !== 'function') process.exit(1);
+  console.log('   resolved:', r.resolve('node-pty'));
+" 2>/dev/null \
   && ok "node-pty native module loads (terminals work)" \
   || bad "node-pty does not load (terminal plugin will be broken)"
 
