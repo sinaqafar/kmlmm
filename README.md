@@ -150,11 +150,18 @@ Other supported variables:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `HEAP_PERCENT` | `95` | % of the container memory limit given to V8 |
-| `PI_WEB_PORT` | `8504` | loopback port for Pi-Web itself |
-| `SETUP_MODE` | `auth` | `direct` = proxy with no auth (don't, on a public domain) |
+| `HEAP_PERCENT` | `95` | % of the container memory limit given to V8 (20–100) |
+| `SETUP_MODE` | `auth` | `direct` = proxy with no auth (private networks only) |
+| `AUTH_PASSWORD_FILE` | `/data/.pi-web-gateway-password` | where the generated password is stored |
+| `PI_WEB_PORT` | `8504` | loopback port for Pi-Web; must differ from `PORT` |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / … | – | any other Pi provider |
 | `TZ` | – | e.g. `Asia/Tehran` for log timestamps |
+
+Advanced (set by the image; change only if you know why): `PI_CODING_AGENT_DIR`
+(`/data/.pi/agent`), `PI_WEB_DATA_DIR` (`/data/pi-web`),
+`PI_WEB_CONFIG`, `PI_WEB_DEFAULTS_CONFIG` (`/app/defaults.json`),
+`PI_SEED_DIR`, `PI_WEB_HOST` (loopback by design). Do **not** set `PORT` —
+Railway injects it.
 
 ### 5. Domain
 
@@ -181,6 +188,12 @@ returns `ok`.
    writes `defaultProvider` / `defaultModel` to `/data/.pi/agent/settings.json`.
 
 ### Multi-model council
+
+> **One key, one rate limit.** All four council roles use `NVIDIA_NIM_API_KEY`
+> and the free NIM tier rate-limits per account. Three advisors in parallel can
+> hit `429`. Run two at a time, or add a second provider and point one advisor
+> at it (see `MULTI-MODEL-GUIDE.md`).
+
 
 Four pi-subagents roles ship in `agents/` and are copied to
 `/data/.pi/agent/agents/` on boot:
