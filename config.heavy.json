@@ -1,0 +1,27 @@
+{
+  "host": "0.0.0.0",
+  "port": 8504,
+  "pathAccess": {
+    "allowedPaths": ["/data", "/app", "/tmp", "/root"]
+  },
+  "spawnSessions": true,
+  "subsessions": true,
+  "sessionDaemon": {
+    "maxSessions": 10,
+    "idleTimeout": 86400000
+  },
+  "context": {
+    "maxTokens": 200000,
+    "compaction": true
+  },
+  "extensions": {
+    "billionContext": {
+      "enabled": true,
+      "compression": "aggressive"
+    },
+    "piLens": {
+      "enabled": true,
+      "lintOnSave": true
+    }
+  }
+}
