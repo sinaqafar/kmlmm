@@ -31,6 +31,19 @@ export PI_WEB_PORT
 export PI_WEB_DEFAULTS_CONFIG="${PI_WEB_DEFAULTS_CONFIG:-/app/defaults.json}"
 
 # ── 1. persistence guard ─────────────────────────────────────────────────────
+# ── 0. validate inputs early, with messages that say what to change ──────────
+[[ "$PORT" =~ ^[0-9]+$ ]] || die "PORT='$PORT' is not a number. Railway sets it; do not override it."
+[[ "$PI_WEB_PORT" =~ ^[0-9]+$ ]] || die "PI_WEB_PORT='$PI_WEB_PORT' is not a number."
+[ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] || die "PORT=$PORT is out of range."
+[ "$PI_WEB_PORT" -ge 1 ] && [ "$PI_WEB_PORT" -le 65535 ] || die "PI_WEB_PORT=$PI_WEB_PORT is out of range."
+[ "$PORT" != "$PI_WEB_PORT" ] || die "PORT and PI_WEB_PORT are both $PORT. The gateway proxies to Pi-Web on PI_WEB_PORT, so they must differ (leave PI_WEB_PORT at 8504)."
+[[ "$HEAP_PERCENT" =~ ^[0-9]+$ ]] && [ "$HEAP_PERCENT" -ge 20 ] && [ "$HEAP_PERCENT" -le 100 ] \
+  || die "HEAP_PERCENT='$HEAP_PERCENT' must be a whole number between 20 and 100."
+case "$SETUP_MODE" in auth|direct) ;; *) die "SETUP_MODE='$SETUP_MODE' must be 'auth' or 'direct'."; esac
+if [ "$SETUP_MODE" = "auth" ]; then
+  case "${AUTH_USERNAME:-pi}" in *:*) die "AUTH_USERNAME cannot contain ':' (HTTP Basic Auth splits credentials on the first colon)." ;; esac
+fi
+
 mkdir -p "$STATE_ROOT" 2>/dev/null || die "cannot create $STATE_ROOT"
 
 is_mountpoint() {
@@ -143,12 +156,16 @@ fi
 # ── 5. bring the stack up ────────────────────────────────────────────────────
 WEB_PID=""
 SESSIOND_PID=""
+GW_PID=""
 cleanup() {
   log "shutting down"
+  [ -n "${GW_PID:-}" ] && kill "$GW_PID" 2>/dev/null || true
   [ -n "$WEB_PID" ] && kill "$WEB_PID" 2>/dev/null || true
   [ -n "$SESSIOND_PID" ] && kill "$SESSIOND_PID" 2>/dev/null || true
 }
-trap cleanup EXIT INT TERM
+# A graceful stop should not look like a crash to the restart policy.
+trap cleanup EXIT
+trap 'cleanup; exit 0' INT TERM
 
 log "starting session daemon"
 pi-web-sessiond >>"$DATA_DIR/logs/sessiond.log" 2>&1 &
@@ -187,4 +204,27 @@ if [ "$SETUP_MODE" = "direct" ]; then
 fi
 
 log "starting auth gateway on 0.0.0.0:${PORT}"
-exec node /app/gateway/server.js
+node /app/gateway/server.js &
+GW_PID=$!
+
+# Supervisor: Railway only watches this pid. If the session daemon or the web
+# server dies, the gateway would keep serving errors forever, so exit non-zero
+# and let the restart policy bring the whole stack back.
+supervise() {
+  while kill -0 "$GW_PID" 2>/dev/null; do
+    for pair in "session-daemon:$SESSIOND_PID" "web-server:$WEB_PID"; do
+      name=${pair%%:*}; pid=${pair##*:}
+      if ! kill -0 "$pid" 2>/dev/null; then
+        warn "$name (pid $pid) exited — restarting the container"
+        kill "$GW_PID" 2>/dev/null || true
+        exit 1
+      fi
+    done
+    sleep 5
+  done
+  # gateway itself died
+  wait "$GW_PID" || true
+  warn "auth gateway exited — restarting the container"
+  exit 1
+}
+supervise

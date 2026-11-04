@@ -88,6 +88,14 @@ function resolveCredentials() {
       console.log(`   username: ${USERNAME}`);
       console.log(`   password: ${plain}`);
       console.log("");
+      try {
+        // A long-lived token is not needed: the operator only has to read it
+        // once. Keep a short-lived copy where the Pi-Web terminal can see it.
+        const otp = `${PASSWORD_FILE}.otp`;
+        fs.writeFileSync(otp, `${USERNAME}:${plain}\n`, { mode: 0o600 });
+        setTimeout(() => { try { fs.unlinkSync(otp); } catch {} }, 30 * 60 * 1000).unref?.();
+        console.log(` Visible for 30 min at ${otp}`);
+      } catch {}
       console.log(` Re-read later:  cat ${PASSWORD_FILE}`);
       console.log(" Pin your own:   printf %s 'pw' | sha256sum  → AUTH_PASSWORD_HASH");
       console.log("──────────────────────────────────────────────────────────────");
@@ -141,7 +149,19 @@ function forwardHeaders(req) {
   return out;
 }
 
+// The platform load balancer reuses upstream connections. Node's 5s default
+// keepAliveTimeout closes them mid-flight behind a proxy, which shows up as
+// sporadic 502s. Keep them open past any plausible proxy idle timeout.
+const KEEP_ALIVE_MS = 75_000;
+
 const server = http.createServer((req, res) => {
+  const startedAt = Date.now();
+  res.on("finish", () => {
+    const ms = Date.now() - startedAt;
+    if (ms > 30_000) {
+      console.warn(`slow request ${req.method} ${req.url} took ${ms}ms`);
+    }
+  });
   // Railway's healthcheck treats 401 as unhealthy, so liveness stays public.
   if (req.url === "/healthz") {
     res.writeHead(200, { "Content-Type": "text/plain" });
@@ -160,6 +180,7 @@ const server = http.createServer((req, res) => {
       method: req.method,
       path: req.url,
       headers: forwardHeaders(req),
+      agent: upstreamAgent,
     },
     (proxyRes) => {
       const headers = { ...proxyRes.headers };
@@ -176,6 +197,17 @@ const server = http.createServer((req, res) => {
     } else {
       res.destroy();
     }
+  });
+
+  // A closed tab or a dropped platform connection must abort the upstream
+  // request too. Otherwise Pi keeps generating (and billing) for a conversation
+  // nobody is reading, and an agent can keep editing files after you "stop".
+  const abortUpstream = () => {
+    if (!proxyReq.destroyed) proxyReq.destroy();
+  };
+  req.on("aborted", abortUpstream);
+  res.on("close", () => {
+    if (!res.writableEnded) abortUpstream();
   });
 
   req.pipe(proxyReq);
@@ -217,9 +249,31 @@ server.on("upgrade", (req, socket, head) => {
   socket.on("close", () => upstream.destroy());
 });
 
+server.on("error", (err) => {
+  if (err && err.code === "EADDRINUSE") {
+    console.error(
+      `FATAL: port ${PORT} is already in use. Railway injects PORT; if you set ` +
+        `PORT yourself, unset it and let Railway choose.`
+    );
+  } else {
+    console.error(`FATAL: gateway server error: ${err && err.message}`);
+  }
+  process.exit(1);
+});
+
+// Recycle idle upstream sockets so a half-closed one is never reused.
+const upstreamAgent = new http.Agent({ keepAlive: true, timeout: KEEP_ALIVE_MS });
+upstreamAgent.on("free", (_socket, options) => {
+  if (options && typeof options === "object") options.reusedSocket = true;
+});
+
 server.on("clientError", (err, socket) => {
   if (socket.writable) socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
 });
+
+server.keepAliveTimeout = KEEP_ALIVE_MS;
+server.headersTimeout = KEEP_ALIVE_MS + 5_000;
+server.requestTimeout = 0; // agent streams and long tool runs legitimately take minutes
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(

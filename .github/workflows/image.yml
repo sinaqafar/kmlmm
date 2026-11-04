@@ -26,6 +26,7 @@ jobs:
           set -eux
           bash -n start.sh
           bash -n scripts/smoke-test.sh
+          bash -n scripts/stop-all.sh
           node --check gateway/server.js
           jq empty defaults.json railway.json
           # Railway rejects Dockerfiles containing VOLUME
@@ -33,6 +34,7 @@ jobs:
           # Railway ignores HEALTHCHECK; healthcheckPath must live in railway.json
           ! grep -nE '^[[:space:]]*HEALTHCHECK' Dockerfile
           jq -e '.deploy.healthcheckPath == "/healthz"' railway.json
+          jq -e '.deploy.requiredMountPath == "/data"' railway.json
 
       - uses: docker/setup-buildx-action@v3
 

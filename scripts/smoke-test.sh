@@ -155,6 +155,34 @@ CODE=$(curl -s -m 5 -o /dev/null -w '%{http_code}' -u smoke:smoke-pass http://12
 BODY=$(curl -s -m 5 http://127.0.0.1:8080/healthz || true)
 [ "$BODY" = "ok" ] && ok "healthz public and unauthenticated" || bad "healthz returned '$BODY'"
 
+step "gateway: generated password mode"
+export AUTH_PASSWORD_FILE=/smoke-generate-pw
+rm -f "$AUTH_PASSWORD_FILE"
+AUTH_USERNAME=gen AUTH_PASSWORD= AUTH_PASSWORD_HASH= PORT=8081 node /app/gateway/server.js \
+  >>"$DATA_DIR/logs/gateway-gen.log" 2>&1 &
+GEN_PID=$!
+for _ in $(seq 1 30); do curl -fsS -m 1 http://127.0.0.1:8081/healthz >/dev/null 2>&1 && break; sleep 1; done
+GEN_PW=$(sed -n 's/^   password: //p' "$DATA_DIR/logs/gateway-gen.log" | head -1)
+[ -n "$GEN_PW" ] && ok "generated a password without AUTH_PASSWORD_HASH" || bad "no generated password in the log"
+[ -s "$AUTH_PASSWORD_FILE" ] && ok "generated password persisted to disk" || bad "generated password not persisted"
+[ "$(stat -c '%a' "$AUTH_PASSWORD_FILE" 2>/dev/null)" = "600" ] && ok "password file mode 600" || bad "password file readable by others"
+CODE=$(curl -s -m 5 -o /dev/null -w '%{http_code}' -u "gen:$GEN_PW" http://127.0.0.1:8081/ || true)
+[ "$CODE" = "200" ] && ok "generated password authenticates" || bad "generated password got $CODE"
+kill "$GEN_PID" 2>/dev/null || true
+
+step "persistence helper"
+[ -x /app/scripts/stop-all.sh ] && ok "stop-all.sh installed and executable" || bad "stop-all.sh missing"
+FH=$(mktemp -d); FV=$(mktemp -d); mkdir -p "$FH/.pi" "$FH/.npm"
+echo '{}' > "$FH/.pi/settings.json"
+HOME_DIR="$FH" VOLUME_ROOT="$FV" /app/scripts/stop-all.sh >/dev/null 2>&1 \
+  && ok "stop-all.sh runs" || bad "stop-all.sh failed"
+[ -L "$FH/.pi" ] && [ -f "$FV/.pi/agent/settings.json" ] \
+  && ok "Pi state moved onto the volume and symlinked" || bad "Pi state not relocated"
+[ -L "$FH/.npm" ] && ok "npm cache relocated" || bad "npm cache not relocated"
+HOME_DIR="$FH" VOLUME_ROOT="$FV" /app/scripts/stop-all.sh >/dev/null 2>&1
+[ -f "$FV/.pi/agent/settings.json" ] && ok "stop-all.sh is idempotent" || bad "second run lost data"
+rm -rf "$FH" "$FV"
+
 step "public surface"
 if (ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null) | awk '{print $4}' | grep -qE '(^|:)8504$' \
    && (ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null) | grep -q '0.0.0.0:8504'; then
