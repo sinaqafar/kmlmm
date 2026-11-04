@@ -65,13 +65,40 @@ jobs:
             exit "$STATUS"
           fi
 
-      - name: Confirm the container does not need Docker's VOLUME
+      # Boot the real container with no volume and a published port: this is as
+      # close to a Railway deploy as CI can get. It asserts the loud volume
+      # warning, the full boot sequence, and the public surface.
+      - name: Boot the image and check the public surface
         run: |
           set -eux
-          # Railway mounts /data at runtime; the image must boot without it and
-          # must warn loudly rather than silently losing state.
-          docker run --rm -e SMOKE_TEST=1 pi-web-railway:ci \
-            bash -c '/app/start.sh 2>&1 | head -40 & sleep 12; kill %1 2>/dev/null; true' \
-            | tee /tmp/boot.log
+          docker rm -f boot >/dev/null 2>&1 || true
+          docker run -d --name boot \
+            -p 18080:8080 \
+            -e AUTH_USERNAME=ci -e AUTH_PASSWORD=ci-pass \
+            pi-web-railway:ci
+
+          for _ in $(seq 1 120); do
+            curl -fsS -m 2 http://127.0.0.1:18080/healthz >/dev/null 2>&1 && break
+            sleep 2
+          done
+
+          docker logs boot > /tmp/boot.log 2>&1 || true
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/boot.log | tail -30
+
           grep -q "NOT a mounted Railway Volume" /tmp/boot.log
           grep -q "node heap:" /tmp/boot.log
+          grep -q "session daemon ready" /tmp/boot.log
+          grep -q "web server healthy" /tmp/boot.log
+          grep -q "starting auth gateway on 0.0.0.0:8080" /tmp/boot.log
+
+          test "$(curl -s -m 5 http://127.0.0.1:18080/healthz)" = "ok"
+          test "$(curl -s -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/)" = "401"
+          test "$(curl -s -m 10 -o /dev/null -w '%{http_code}' -u ci:ci-pass http://127.0.0.1:18080/)" = "200"
+          test "$(curl -s -m 5 -o /dev/null -w '%{http_code}' -u ci:wrong http://127.0.0.1:18080/)" = "401"
+
+          # Pi packages must resolve from the profile the container actually uses
+          docker exec boot env PI_CODING_AGENT_DIR=/data/.pi/agent pi list > /tmp/list.txt 2>&1
+          test "$(grep -c '^  npm:' /tmp/list.txt)" -ge 16
+          test "$(ls /data/.pi/agent/agents/*.md | wc -l)" -ge 4
+
+          docker rm -f boot
