@@ -32,7 +32,17 @@ export PI_WEB_DEFAULTS_CONFIG="${PI_WEB_DEFAULTS_CONFIG:-/app/defaults.json}"
 
 # ── 1. persistence guard ─────────────────────────────────────────────────────
 mkdir -p "$STATE_ROOT" 2>/dev/null || die "cannot create $STATE_ROOT"
-if ! mountpoint -q "$STATE_ROOT" 2>/dev/null; then
+
+is_mountpoint() {
+  if command -v mountpoint >/dev/null 2>&1; then
+    mountpoint -q "$1" 2>/dev/null
+    return $?
+  fi
+  # util-linux may be absent; ask the kernel directly.
+  awk -v p="$1" '$5 == p {found=1} END {exit !found}' /proc/self/mountinfo 2>/dev/null
+}
+
+if ! is_mountpoint "$STATE_ROOT"; then
   warn "════════════════════════════════════════════════════════════════"
   warn " $STATE_ROOT is NOT a mounted Railway Volume."
   warn " Projects, sessions, Pi memory and auth will be WIPED on every deploy."
@@ -50,6 +60,18 @@ seed_missing() {
     log "first boot — seeding Pi packages and auth from image"
     mkdir -p "$AGENT_DIR"
     cp -a "$SEED_DIR/agent/." "$AGENT_DIR/"
+    # The image was built with HOME=/root, so packages live in a shared npm
+    # cache outside the profile. Rewrite that path, otherwise Pi looks for the
+    # seed directory that does not exist on the volume.
+    local seeded="$AGENT_DIR/settings.json"
+    if jq -e '.packages | type == "array"' "$seeded" >/dev/null 2>&1; then
+      jq '(.. | strings) |= gsub("/root/.pi/agent"; $dir)' \
+        --arg dir "$AGENT_DIR" "$seeded" >"$seeded.tmp" \
+        && mv "$seeded.tmp" "$seeded" \
+        && log "rewrote seeded package paths to $AGENT_DIR"
+    else
+      warn "seeded settings.json is not valid JSON — leaving it untouched"
+    fi
     return 0
   fi
 
