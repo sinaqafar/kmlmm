@@ -1,0 +1,121 @@
+name: image
+
+# Builds the exact image Railway builds, then boots it and asserts the things
+# a bad deploy would silently break: packages resolving from the volume,
+# agent files parsing, session daemon + web server coming up, and the auth
+# gateway neither leaking nor over-blocking.
+on:
+  push:
+    branches: ["main", "arena/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  build-and-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate static files
+        run: |
+          set -eux
+          bash -n start.sh
+          bash -n scripts/smoke-test.sh
+          bash -n scripts/stop-all.sh
+          node --check gateway/server.js
+          jq empty defaults.json railway.json
+          # Railway rejects Dockerfiles containing VOLUME
+          ! grep -nE '^[[:space:]]*VOLUME' Dockerfile
+          # Railway ignores HEALTHCHECK; healthcheckPath must live in railway.json
+          ! grep -nE '^[[:space:]]*HEALTHCHECK' Dockerfile
+          jq -e '.deploy.healthcheckPath == "/healthz"' railway.json
+          jq -e '.deploy.requiredMountPath == "/data"' railway.json
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image (Railway's builder is Dockerfile; same file)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: pi-web-railway:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Failures are surfaced as ::error workflow commands. Those show up as
+      # check-run annotations, which stay readable even when artifact and log
+      # endpoints are unreachable.
+      - name: Smoke test inside the image
+        run: |
+          set +e
+          docker run --rm --name smoke -e SMOKE_TEST=1 \
+            pi-web-railway:ci /app/scripts/smoke-test.sh > /tmp/smoke.log 2>&1
+          STATUS=$?
+          echo "::group::smoke test ($(grep -c 'PASS' /tmp/smoke.log || echo 0) checks passed)"
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/smoke.log || true
+          echo "::endgroup::"
+
+          if [ "$STATUS" -ne 0 ]; then
+            while IFS= read -r line; do
+              printf '::error file=scripts/smoke-test.sh,line=1::%s\n' "$line"
+            done < <(sed 's/\x1b\[[0-9;]*m//g' /tmp/smoke.log \
+                       | grep -E '^  FAIL|smoke test: ' | head -15)
+            printf '::error file=scripts/smoke-test.sh,line=1::smoke test failed (exit %s)\n' "$STATUS"
+            exit "$STATUS"
+          fi
+
+      # Boot the real container with no volume and a published port: this is as
+      # close to a Railway deploy as CI can get. It asserts the loud volume
+      # warning, the full boot sequence, and the public surface.
+      - name: Boot the image and check the public surface
+        run: |
+          set -eux
+          docker rm -f boot >/dev/null 2>&1 || true
+          docker run -d --name boot \
+            -p 18080:8080 \
+            -e AUTH_USERNAME=ci -e AUTH_PASSWORD=ci-pass \
+            pi-web-railway:ci
+
+          for _ in $(seq 1 120); do
+            curl -fsS -m 2 http://127.0.0.1:18080/healthz >/dev/null 2>&1 && break
+            sleep 2
+          done
+
+          docker logs boot > /tmp/boot.log 2>&1 || true
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/boot.log | tail -30
+
+          echo "::group::boot log"
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/boot.log | tail -40
+          echo "::endgroup::"
+          grep -q "NOT a mounted Railway Volume" /tmp/boot.log
+          grep -q "node heap:" /tmp/boot.log
+          grep -q "session daemon ready" /tmp/boot.log
+          grep -q "web server healthy" /tmp/boot.log
+          grep -q "starting auth gateway on 0.0.0.0:8080" /tmp/boot.log
+
+          test "$(curl -s -m 5 http://127.0.0.1:18080/healthz)" = "ok"
+          test "$(curl -s -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/)" = "401"
+          test "$(curl -s -m 10 -o /dev/null -w '%{http_code}' -u ci:ci-pass http://127.0.0.1:18080/)" = "200"
+          test "$(curl -s -m 5 -o /dev/null -w '%{http_code}' -u ci:wrong http://127.0.0.1:18080/)" = "401"
+
+          # Pi packages must resolve from the profile the container actually uses
+          set +e
+          docker exec boot env PI_CODING_AGENT_DIR=/data/.pi/agent pi list > /tmp/list.txt 2>&1
+          LIST_RC=$?
+          set -e
+          echo "::group::pi list (rc=$LIST_RC)"
+          head -40 /tmp/list.txt
+          echo "::endgroup::"
+          echo "npm entries: $(grep -c '^  npm:' /tmp/list.txt || true)"
+          echo "agent files: $(docker exec boot sh -c 'ls /data/.pi/agent/agents/*.md | wc -l' || echo ERR)"
+          docker exec boot sh -c 'ls -la /data/.pi/agent | head; jq -c . /data/.pi/agent/settings.json | head -c 500' || true
+          test "$LIST_RC" -eq 0
+          test "$(grep -c '^  npm:' /tmp/list.txt)" -ge 16
+          test "$(docker exec boot sh -c 'ls /data/.pi/agent/agents/*.md | wc -l')" -ge 4
+
+          docker rm -f boot

@@ -2,3 +2,5 @@ node_modules
 .git
 data
 *.log
+*.zip
+.DS_Store
