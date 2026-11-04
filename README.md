@@ -218,8 +218,22 @@ packages you installed later.
 **Update Pi packages** — inside a session terminal:
 
 ```bash
-pi update && pi-web restart
+/app/scripts/update.sh            # extension packages (stored on /data)
+/app/scripts/update.sh --self     # also pi + pi-web (lasts until the next deploy)
 ```
+
+Do not run `npm i -g ...` by hand: global packages live in the image layer, so
+the upgrade looks successful and silently reverts on the next deploy.
+
+**Keep editor/tool state across deploys** — run once inside the terminal:
+
+```bash
+/app/scripts/stop-all.sh
+```
+
+It moves Pi state, npm/npm cache, git config, SSH keys, and Rust/Go/Bun/Deno
+caches onto `/data` and symlinks them back, then prints anything still living
+outside the volume. Use `--dry-run` to see the plan first.
 
 **Sizing** — `start.sh` reads the cgroup memory limit, gives V8 95% of it
 (minus 256 MB above 4 GB) and leaves the rest to git, `node-pty` shells and

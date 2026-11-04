@@ -183,6 +183,17 @@ HOME_DIR="$FH" VOLUME_ROOT="$FV" /app/scripts/stop-all.sh >/dev/null 2>&1
 [ -f "$FV/.pi/agent/settings.json" ] && ok "stop-all.sh is idempotent" || bad "second run lost data"
 rm -rf "$FH" "$FV"
 
+step "maintenance scripts"
+[ -x /app/scripts/update.sh ] && ok "update.sh installed" || bad "update.sh missing"
+/app/scripts/update.sh --help >/dev/null 2>&1 && ok "update.sh --help works" || bad "update.sh --help broken"
+/app/scripts/update.sh --dry-run >/dev/null 2>&1 && ok "update.sh --dry-run works" || bad "update.sh --dry-run broken"
+/app/scripts/update.sh --bogus >/dev/null 2>&1 && bad "update.sh accepted an unknown flag" || ok "update.sh rejects unknown flags"
+
+step "supervisor wiring"
+grep -q "supervise" /app/start.sh && ok "start.sh supervises children" || bad "no supervisor in start.sh"
+grep -q "exit 1" /app/start.sh && ok "supervisor can fail the container" || bad "supervisor cannot fail the container"
+grep -q "trap 'cleanup; exit 0' INT TERM" /app/start.sh && ok "SIGTERM exits 0 (graceful)" || bad "SIGTERM would look like a crash"
+
 step "public surface"
 if (ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null) | awk '{print $4}' | grep -qE '(^|:)8504$' \
    && (ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null) | grep -q '0.0.0.0:8504'; then
